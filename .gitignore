@@ -1,2 +1,4 @@
-
+__pychace__
 .DS_Store
+.pyc
+.ipynb_checkpoints
