@@ -9,6 +9,7 @@ from ase.units import *
 import h5py
 from fast_functions import *
 from slow_functions import *
+from tqdm import tqdm
 
 class ExcitonMoS2(object):
 
@@ -83,7 +84,7 @@ class ExcitonMoS2(object):
                 for i,j in product(self.cb,self.vb):
                     self.indexes.append((kx,ky,i,j))
         self.NH=len(self.indexes)
-        print('Exciton Hamiltonian size: '+str(self.NH)+' K-space size: '+str(int(np.sum(self.weight))))
+#         print('Exciton Hamiltonian size: '+str(self.NH)+' K-space size: '+str(int(np.sum(self.weight))))
         
   
         R=np.fft.fftshift(self.R,axes=(0,1))
@@ -94,28 +95,30 @@ class ExcitonMoS2(object):
             dx[i,j]=np.linalg.multi_dot([self.D[i,j].T.conj(),dx[i,j],self.D[i,j]])
             dy[i,j]=np.linalg.multi_dot([self.D[i,j].T.conj(),dy[i,j],self.D[i,j]])
         self.dx=dx;self.dy=dy
+        self.d=dx
+        
     
-    def constructTrionBasis(self,Trion_Q=[(1./3.),(1./3.),0]):
-        self.Trion_Q=np.array([q*self.N for q in Trion_Q],dtype=int)
+    def constructTrionBasis(self,trion_q=[(1./3.),(1./3.),0]):
+        self.trion_q=np.array([q*self.N for q in trion_q],dtype=int)
+        self.trion_spectrum_shift=self.E[self.trion_q[0],self.trion_q[1],self.cb[0]]
         self.trion_indexes=[]
-        for kx1,ky1,kx2,ky2 in product(range(self.N),range(self.N),range(self.N),range(self.N)):
-            if self.weight[kx1,ky1]+self.weight[kx2,ky2]==2:
-                kx3=(kx1+kx2-self.Trion_Q[0])%self.N
-                ky3=(ky1+ky2-self.Trion_Q[1])%self.N
-                if self.weight[kx3,ky3]==1:
-                    for i1,i2,i3 in product(self.cb,self.cb,self.vb):
-                        self.trion_indexes.append((kx1,ky1,
-                                                   kx2,ky2,
-                                                   kx3,ky3,
-                                                   i1,i2,i3))
+        
+        self.conduction_states=[(kx,ky,c) for kx,ky,c in product(range(self.N),range(self.N),self.cb)]
+        self.valence_states=[(kx,ky,v) for kx,ky,v in product(range(self.N),range(self.N),self.vb)]
+        
+        self.nc=len(self.conduction_states)
+        self.nv=len(self.valence_states)
+        
+        self.trion_indexes=FastTrionBasis(self.conduction_states,self.valence_states, self.trion_q,self.weight)              
         self.NT=len(self.trion_indexes)
-        print('Trion Hamiltonian size: '+str(self.NT)+' K-space size: '+str(int(np.sum(self.weight))))
         
     def constructTrionHamiltonian(self):
         HT=np.zeros((self.NT,self.NT),dtype=complex)
-        self.HT=FastTrionHamiltonian(HT,self.E,self.D,self.W,self.V,self.trion_indexes,self.shift)
+        self.HT=FastTrionHamiltonian(HT,self.E,self.D,self.W,self.V,
+                                     self.conduction_states,self.valence_states,
+                                     self.trion_indexes,self.shift)
 
-    def constuctExcitonHamiltonian(self,Q=[0,0,0],optic=True):
+    def constuctExcitonHamiltonian(self,Q=[0,0,0]):
         self.Q=np.array([q*self.N for q in Q],dtype=int)
         HH=np.empty((self.NH,self.NH),dtype=np.complex)
         self.HH=FastExcitonHamiltonian(HH,self.E,self.shift,self.D,self.W,self.V,self.indexes,self.Q)
@@ -125,14 +128,17 @@ class ExcitonMoS2(object):
         omega=np.delete(omega,0)
         P=np.zeros(self.NT,dtype=complex)
         for i in range(self.NT):
-            x1,y1,x2,y2,x3,y3,i1,i2,i3=self.trion_indexes[i]
-            if x1==self.Trion_Q[0] and y1==self.Trion_Q[1]:
-                if x2==x3 and y2==y3:
-                    P[i]+=self.dx[x2,y2,i2,i3]
-            if x2==self.Trion_Q[0] and y2==self.Trion_Q[1]:
-                if x1==x3 and y1==y3:
-                    P[i]-=self.dx[x1,y1,i1,i3]
-                    
+            i1,i2,j=self.trion_indexes[i]
+            x1,y1,c1=self.conduction_states[i1]
+            x2,y2,c2=self.conduction_states[i2]
+            xv,yv,v=self.valence_states[j]
+            if x1==self.trion_q[0] and y1==self.trion_q[1]:
+                if x2==xv and y2==yv:
+                    P[i]+=(self.d[x2,y2,c2,v])
+            if x2==self.trion_q[0] and y2==self.trion_q[1]:
+                if x1==xv and y1==yv:
+                    P[i]-=(self.d[x1,y1,c1,v])
+                
         a,b=lanczos(self.HT,P,n_iter)
         eps=np.zeros(omega.size,dtype=complex)
         for i in range(1,n_iter):
@@ -140,12 +146,14 @@ class ExcitonMoS2(object):
         eps=1/(omega+1j*eta-a[0]-eps)
         self.trion_eps=eps
         self.trion_omega=omega
-    
-    def calculateAbsobtionSpectrum(self,eta=0.03,omega_max=5,omega_n=5000,n_iter=300):     
+        
+        
+        
+    def calculateAbsobtionSpectrum(self,eta=0.03,omega_max=5,omega_n=50000,n_iter=300):     
         omega=np.linspace(0,omega_max,omega_n+1)+1j*eta
         omega=np.delete(omega,0) 
         
-        P=np.array([self.dx[indx] for indx in self.indexes])
+        P=np.array([self.d[indx] for indx in self.indexes])
         a,b=lanczos(self.HH,P,n_iter)
             
         eps=np.zeros(omega.size,dtype=complex)
@@ -155,35 +163,18 @@ class ExcitonMoS2(object):
         self.eps=eps
         self.omega=omega
         
-    def plotAbsobtionSpectrum(self,shift):
+    def plotAbsobtionSpectrum(self):
         plt.figure()
         if hasattr(self, 'omega') and hasattr(self, 'eps'):
             plt.plot(self.omega.real,-self.eps.imag,label='Exciton')
             
         if hasattr(self, 'trion_omega') and hasattr(self, 'trion_eps'):
-            plt.plot(self.trion_omega.real-shift,-self.trion_eps.imag,label='Trion')
+            
+            plt.plot(self.trion_omega.real-self.trion_spectrum_shift,-self.trion_eps.imag,label='Trion')
         plt.grid()
         plt.legend()
         plt.xlim([0,None])
         
-    
-    def plotExcitonWaveFunction(self,i):
-        wave_k,wave_r=self.ExcitonWaveFunction(i)
-
-        plt.figure()
-        plt.subplot(211, title="Reciprocal Space")
-        plt.scatter(self.K[:,:,0],self.K[:,:,1],c=wave_k)
-        plt.xlabel('$\AA^{-1}$');plt.ylabel('$\AA^{-1}$')
-        plt.grid()
-        plt.axis('equal')
-            
-        plt.subplot(212, title="Real Space")
-        plt.scatter(self.R[:,:,0],self.R[:,:,1],c=wave_r)
-        plt.xlabel('$\AA$');plt.ylabel('$\AA$')
-        plt.grid()
-        plt.axis('equal')
-        
-        plt.suptitle('Peak: '+str(np.round(self.EH[i],4)))
         
     def plotBandStructure(self,N1=20,emax=5,emin=-8,E_Fermi=0):
         gamma=np.array([0.,0.,0.])

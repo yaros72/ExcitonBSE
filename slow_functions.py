@@ -15,4 +15,5 @@ def lanczos(H,P,n_iter):
         vec.append(H@vec[-1]-a[-1]*vec[-1]-b[-1]*vec[-2])
         vec[-1]/=np.abs(np.linalg.norm(vec[-1]))
         del vec[0]
+        
     return a,b
