@@ -6,27 +6,27 @@ def FastTrionBasis(cs,vs,q,weight):
     nc=len(cs);nv=len(vs)
     trion_indexes=[]
     N=weight.shape[0]
+    
     for i1 in range(nc):
         kx1,ky1,c1=cs[i1]
         if weight[kx1,ky1]==1:
             for i2 in range(i1+1,nc):
-                kx2,ky2,c2=cs[i2]
-                if weight[kx2,ky2]==1:
-                    for j in range(nv):
-                        kxv,kyv,v=vs[j]
-                        if weight[kxv,kyv]==1:
-                            if (kx1+kx2-kxv)%N==q[0] and (ky1+ky2-kyv)%N==q[1]:
-                                trion_indexes.append((i1,i2,j))
+                    kx2,ky2,c2=cs[i2]
+                    if weight[kx2,ky2]==1:
+                        for j in range(nv):
+                            kxv,kyv,v=vs[j]
+                            if weight[kxv,kyv]==1:
+                                if (kx1+kx2-kxv)%N==q[0] and (ky1+ky2-kyv)%N==q[1]:
+                                    trion_indexes.append((i1,i2,j))
     return trion_indexes
-        
-
+            
 
 @numba.njit(parallel=True,nogil=True,fastmath=True)
-def FastExcitonHamiltonian(H,E,shift,D,W,V,indexes,q):
+def FastExcitonHamiltonian(H,E,D,W,V,indexes,q):
     NH=H.shape[0];N=E.shape[0]
     for i1 in numba.prange(NH):
         x1,y1,c1,v1=indexes[i1]
-        H[i1,i1]=E[(x1+q[0])%N,(y1+q[1])%N,c1]-E[x1,y1,v1]+shift
+        H[i1,i1]=E[(x1+q[0])%N,(y1+q[1])%N,c1]-E[x1,y1,v1]
         
         overlap_c=np.dot(D[(x1+q[0])%N,(y1+q[1])%N,:,c1].T.conjugate(),D[(x1+q[0])%N,(y1+q[1])%N,:,c1]);
         overlap_v=np.dot(D[x1,y1,:,v1].T.conjugate(),D[x1,y1,:,v1]);
@@ -50,8 +50,8 @@ def FastExcitonHamiltonian(H,E,shift,D,W,V,indexes,q):
     return H
 
 
-@numba.njit(parallel=True,nogil=True,fastmath=True)
-def FastTrionHamiltonian(H,E,D,W,V,cs,vs,indexes,shift): 
+@numba.jit(parallel=True)
+def FastTrionHamiltonian(H,E,D,W,V,cs,vs,indexes): 
     NH=len(indexes);N=E.shape[0]
     for indx in numba.prange(NH):   
         
@@ -60,7 +60,8 @@ def FastTrionHamiltonian(H,E,D,W,V,cs,vs,indexes,shift):
         x2,y2,c2=cs[i2]
         xv,yv,v=vs[j]
         
-        H[indx,indx]=E[x1,y1,c1]+E[x2,y2,c2]-E[xv,yv,v]+shift    
+        H[indx,indx]=E[x1,y1,c1]+E[x2,y2,c2]-E[xv,yv,v]   
+        
         for indx_ in range(indx,NH):   
             
             i1_,i2_,j_=indexes[indx_]

@@ -10,6 +10,7 @@ import h5py
 from fast_functions import *
 from slow_functions import *
 from tqdm import tqdm
+from scipy.sparse import lil_matrix
 
 class ExcitonMoS2(object):
 
@@ -54,7 +55,7 @@ class ExcitonMoS2(object):
             e,d=np.linalg.eigh(self.H[i,j])
             self.E[i,j]=e;self.D[i,j]=d
             self.K[i,j]=i*self.k1/N+j*self.k2/N
-
+        self.E[:,:,cb[0]:]+=self.shift
         R=np.zeros((N,N,3))
         for i,j in product(range(N),range(N)):
             R[i,j]=self.a1*(i-N/2)+self.a2*(j-N/2)
@@ -73,7 +74,7 @@ class ExcitonMoS2(object):
         WR=np.fft.fftshift(WR);self.W=np.fft.fft2(WR)/N**2
         VR=np.fft.fftshift(VR);self.V=np.fft.fft2(VR)/N**2
         
-        self.gap=self.E[:,:,cb[0]]-self.E[:,:,vb[-1]]+shift
+        self.gap=self.E[:,:,cb[0]]-self.E[:,:,vb[-1]]
         self.Egap=np.min(self.gap)
         self.weight=np.ones((self.N,self.N))
         
@@ -101,6 +102,7 @@ class ExcitonMoS2(object):
     def constructTrionBasis(self,trion_q=[(1./3.),(1./3.),0]):
         self.trion_q=np.array([q*self.N for q in trion_q],dtype=int)
         self.trion_spectrum_shift=self.E[self.trion_q[0],self.trion_q[1],self.cb[0]]
+
         self.trion_indexes=[]
         
         self.conduction_states=[(kx,ky,c) for kx,ky,c in product(range(self.N),range(self.N),self.cb)]
@@ -109,22 +111,22 @@ class ExcitonMoS2(object):
         self.nc=len(self.conduction_states)
         self.nv=len(self.valence_states)
         
-        self.trion_indexes=FastTrionBasis(self.conduction_states,self.valence_states, self.trion_q,self.weight)              
+        self.trion_indexes=FastTrionBasis(self.conduction_states,self.valence_states, self.trion_q,self.weight) 
         self.NT=len(self.trion_indexes)
         
     def constructTrionHamiltonian(self):
         HT=np.zeros((self.NT,self.NT),dtype=complex)
         self.HT=FastTrionHamiltonian(HT,self.E,self.D,self.W,self.V,
                                      self.conduction_states,self.valence_states,
-                                     self.trion_indexes,self.shift)
+                                     self.trion_indexes)
 
     def constuctExcitonHamiltonian(self,Q=[0,0,0]):
         self.Q=np.array([q*self.N for q in Q],dtype=int)
         HH=np.empty((self.NH,self.NH),dtype=np.complex)
-        self.HH=FastExcitonHamiltonian(HH,self.E,self.shift,self.D,self.W,self.V,self.indexes,self.Q)
-    
-    def calculateAbsobtionSpectrumTrion(self,eta=0.03,omega_max=5,omega_n=50000,n_iter=300):
-        omega=np.linspace(0,omega_max,omega_n+1)+1j*eta
+        self.HH=FastExcitonHamiltonian(HH,self.E,self.D,self.W,self.V,self.indexes,self.Q)
+        
+    def calculateAbsobtionSpectrumTrion(self,eta=0.03,omega_min=0,omega_max=5,omega_n=5001,n_iter=300):
+        omega=np.linspace(omega_min+self.trion_spectrum_shift,omega_max+self.trion_spectrum_shift,omega_n+1)+1j*eta
         omega=np.delete(omega,0)
         P=np.zeros(self.NT,dtype=complex)
         for i in range(self.NT):
@@ -146,11 +148,11 @@ class ExcitonMoS2(object):
         eps=1/(omega+1j*eta-a[0]-eps)
         self.trion_eps=eps
         self.trion_omega=omega
+       
         
         
-        
-    def calculateAbsobtionSpectrum(self,eta=0.03,omega_max=5,omega_n=50000,n_iter=300):     
-        omega=np.linspace(0,omega_max,omega_n+1)+1j*eta
+    def calculateAbsobtionSpectrum(self,eta=0.03,omega_min=0,omega_max=5,omega_n=5001,n_iter=300):     
+        omega=np.linspace(omega_min,omega_max,omega_n+1)+1j*eta
         omega=np.delete(omega,0) 
         
         P=np.array([self.d[indx] for indx in self.indexes])
